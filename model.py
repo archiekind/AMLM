@@ -3,11 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 #hyperparameters
-layers = 8
+layers = 0
 heads = 8
-d_model = 128
-batch_size = 128
-
+d_model = 512
+batch_size = 32
+tokens = 1000
+block_length = 40
+#device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
+device = 'cpu'
 #model
 
 class MultiHeadAttention(nn.Module):
@@ -17,6 +20,7 @@ class MultiHeadAttention(nn.Module):
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
         self.w_out = nn.Linear(d_model, d_model)
+        self.register_buffer("mask", torch.tril(torch.ones(block_length, block_length)).view(1,1,block_length,block_length))
 
     def forward(self, x): # (b, t, c)
         b, t, c = x.size()
@@ -25,7 +29,9 @@ class MultiHeadAttention(nn.Module):
         v = self.v_proj(x).view(b, t, heads, int(c/heads)).transpose(1,2)
 
         dk = k.size(dim=3)
-        weights = F.softmax(q @ (k.transpose(2,3)) / (dk ** (1/2)), dim=-1) # (b, h, t, t)
+        weights = q @ (k.transpose(2,3)) / (dk ** (1/2)) # (b, h, t, t)
+        weights = weights.masked_fill(self.mask[:,:,:t,:t] == 0, float('-inf'))
+        weights = F.softmax(weights, dim=-1)
         out = weights @ v # (b, h, t, c/h)
         out = out.transpose(1, 2).contiguous().view(b,t,c) # (b, t, c)
         out = self.w_out(out)
@@ -49,16 +55,41 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.attn = MultiHeadAttention()
         self.ffw = FeedForward()
-        ln1 = nn.LayerNorm()
-        ln2 = nn.LayerNorm()
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
 
     def forward(self, x):
-        sl1 = self.ln1(self.attn(x) + x) # (sl1 = sub-layer 1)
-        sl2 = self.ln2(self.ffw(sl1) + sl1)
-        return sl2
-    
+        #out = self.attn(self.ln1(x)) + x
+        out = self.ffw(self.ln2(x)) + x
+        return out
+  
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.blocks = nn.ModuleList(TransformerBlock() for _ in range(layers))
+        self.ffw = nn.Linear(d_model, tokens)
+        self.tok_emb = nn.Embedding(tokens, tokens) #d_model
+        self.pos_emb = nn.Embedding(block_length, d_model)
 
-MHA = FeedForward()
-x = torch.randn(10, 20, 128)
-out = MHA(x)
-print(out.shape)
+    def forward(self, x, y=None):
+        pos = torch.arange(block_length).to(device)
+        x = self.tok_emb(x)# + self.pos_emb(pos)
+        for block in self.blocks:
+            x = block(x)
+        out = F.softmax(x, dim=-1)#self.ffw(x)
+
+        if y is not None:
+            loss = F.cross_entropy(out.contiguous().view(-1, out.size(-1)), y.contiguous().view(-1))
+            return out, loss
+        else:
+            return out
+        
+    def generate(self, x):
+        x = x.view(1,1)
+        for _ in range(50):
+            out = self(x)
+            out = out[:, -1, :]
+            probs = F.softmax(out, dim=-1)
+            x1 = torch.multinomial(probs, num_samples=1)
+            x = torch.cat((x, x1), dim=1)
+        return x

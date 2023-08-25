@@ -1,0 +1,1 @@
+bigram loss fell to 6.7 after 1500 steps at lr 1e-2

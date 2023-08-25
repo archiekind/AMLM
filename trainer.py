@@ -2,7 +2,7 @@ from datasets import load_dataset
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.pre_tokenizers import ByteLevel
 import model
 import torch
 import matplotlib.pyplot as plt
@@ -11,20 +11,28 @@ import random
 # hyperparameters
 batch_size = 32
 block_length = 40
-training_steps = 1500
-lr = 1e-2
+training_steps = 15000
+lr = 1e-3
 device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
-device = 'cpu'
 
 # dataset
 
 dataset = load_dataset("cnn_dailymail", "3.0.0", split="train[:10%]").shuffle()
-#tokeniser = Tokenizer(BPE())
-#trainer = BpeTrainer(vocab_size=1000)
-#tokeniser.pre_tokenizer = Whitespace()
+#tokeniser = Tokenizer(BPE(unk_token="[UNK]"))
+#tokeniser.pre_tokenizer = ByteLevel()
+#trainer = BpeTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]"], vocab_size=150)
 #tokeniser.train(files=["./data.txt"], trainer=trainer)
 #tokeniser.save("./tokeniser.json")
 tokeniser = Tokenizer.from_file("./tokeniser.json")
+
+def decode(x):
+    out = tokeniser.decode(x).split()
+    for i in range(len(out)):
+        out[i] = out[i].replace("Ġ", " ")
+    print("".join(out))
+
+enc = tokeniser.encode("Hello, baby!")
+decode(enc.ids)
 
 input_ids = []
 for article in dataset["article"]:
@@ -41,7 +49,7 @@ transformer = model.Model().to(device)
 optimiser = torch.optim.Adam(transformer.parameters(), lr=lr)
 
 dataset = input_ids
-len_dataset = len(input_ids)
+len_dataset = len(input_ids) - 20
 
 #trainer
 losses = []
@@ -62,8 +70,9 @@ for i in range(training_steps):
         losses.append(loss.item())
         print(loss.item())
 
-#generate sample#
-print(tokeniser.decode(transformer.generate(torch.tensor([32], dtype=torch.long))[0].tolist()))
+#generate sample
+generation = transformer.generate(torch.tensor([32], dtype=torch.long).to(device)).view(-1).tolist()
+decode(generation)
 
 plt.plot(losses)
 plt.show()

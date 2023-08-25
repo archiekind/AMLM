@@ -3,38 +3,36 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 #hyperparameters
-layers = 0
+layers = 1
 heads = 8
-d_model = 512
+d_model = 128 #512
 batch_size = 32
-tokens = 1000
+tokens = 150
 block_length = 40
-#device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
-device = 'cpu'
+device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 #model
 
 class MultiHeadAttention(nn.Module):
     def __init__(self):
         super().__init__()
-        self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.w_out = nn.Linear(d_model, d_model)
+        self.proj = nn.Linear(d_model, 3*d_model, bias=False)
+        self.w_out = nn.Linear(d_model, d_model, bias=False)
         self.register_buffer("mask", torch.tril(torch.ones(block_length, block_length)).view(1,1,block_length,block_length))
 
     def forward(self, x): # (b, t, c)
         b, t, c = x.size()
-        q = self.q_proj(x).view(b, t, heads, int(c/heads)).transpose(1,2)
-        k = self.k_proj(x).view(b, t, heads, int(c/heads)).transpose(1,2) # (b, h, t, c/h)
-        v = self.v_proj(x).view(b, t, heads, int(c/heads)).transpose(1,2)
+        q, k, v = self.proj(x).split(d_model, dim=-1)
+        q = q.view(b, t, heads, int(c/heads)).transpose(1,2)
+        k = k.view(b, t, heads, int(c/heads)).transpose(1,2) # (b, h, t, c/h)
+        v = v.view(b, t, heads, int(c/heads)).transpose(1,2)
 
-        dk = k.size(dim=3)
-        weights = q @ (k.transpose(2,3)) / (dk ** (1/2)) # (b, h, t, t)
+        dk = k.size(dim=-1)
+        weights = (q @ k.transpose(-2,-1)) * (dk**-0.5) # (b, h, t, t)
         weights = weights.masked_fill(self.mask[:,:,:t,:t] == 0, float('-inf'))
         weights = F.softmax(weights, dim=-1)
         out = weights @ v # (b, h, t, c/h)
         out = out.transpose(1, 2).contiguous().view(b,t,c) # (b, t, c)
-        out = self.w_out(out)
+        #out = self.w_out(out)
         return out
         
 class FeedForward(nn.Module):
@@ -59,27 +57,31 @@ class TransformerBlock(nn.Module):
         self.ln2 = nn.LayerNorm(d_model)
 
     def forward(self, x):
-        #out = self.attn(self.ln1(x)) + x
-        out = self.ffw(self.ln2(x)) + x
+        out = self.attn(self.ln1(x)) + x
+        out = self.ffw(self.ln2(out)) + out
+        #out = self.attn(x)
         return out
-  
+
 class Model(nn.Module):
     def __init__(self):
         super().__init__()
+        self.tok_emb = nn.Embedding(tokens, d_model) 
+        self.pos_emb = nn.Embedding(block_length, d_model)
         self.blocks = nn.ModuleList(TransformerBlock() for _ in range(layers))
         self.ffw = nn.Linear(d_model, tokens)
-        self.tok_emb = nn.Embedding(tokens, tokens) #d_model
-        self.pos_emb = nn.Embedding(block_length, d_model)
+
 
     def forward(self, x, y=None):
-        pos = torch.arange(block_length).to(device)
-        x = self.tok_emb(x)# + self.pos_emb(pos)
+        pos = torch.arange(x.size(-1)).to(device)
+        x = self.tok_emb(x) + self.pos_emb(pos)
         for block in self.blocks:
             x = block(x)
-        out = F.softmax(x, dim=-1)#self.ffw(x)
+        out = self.ffw(x)
 
         if y is not None:
-            loss = F.cross_entropy(out.contiguous().view(-1, out.size(-1)), y.contiguous().view(-1))
+            logits = out.view(batch_size*block_length, tokens)
+            targets = y.view(batch_size*block_length)
+            loss = F.cross_entropy(logits, targets)
             return out, loss
         else:
             return out
@@ -87,6 +89,7 @@ class Model(nn.Module):
     def generate(self, x):
         x = x.view(1,1)
         for _ in range(50):
+            x = x[:, -block_length:]
             out = self(x)
             out = out[:, -1, :]
             probs = F.softmax(out, dim=-1)

@@ -1,17 +1,19 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import json
 
 #hyperparameters
-layers = 6
-heads = 8
-d_model = 512
-batch_size = 32
-tokens = 2000
-block_length = 40
+config = json.load(open("./config.json"))
+layers = config["layers"]
+heads = config["heads"]
+d_model = config["d_model"]
+batch_size = config["batch_size"]
+vocab_size = config["vocab_size"]
+block_length = config["block_length"]
 device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
-#model
 
+#model
 class MultiHeadAttention(nn.Module):
     def __init__(self):
         super().__init__()
@@ -65,10 +67,10 @@ class TransformerBlock(nn.Module):
 class Model(nn.Module):
     def __init__(self):
         super().__init__()
-        self.tok_emb = nn.Embedding(tokens, d_model) 
+        self.tok_emb = nn.Embedding(vocab_size, d_model) 
         self.pos_emb = nn.Embedding(block_length, d_model)
         self.blocks = nn.ModuleList(TransformerBlock() for _ in range(layers))
-        self.ffw = nn.Linear(d_model, tokens)
+        self.ffw = nn.Linear(d_model, vocab_size)
 
 
     def forward(self, x, y=None):
@@ -79,16 +81,16 @@ class Model(nn.Module):
         out = self.ffw(x)
 
         if y is not None:
-            logits = out.view(batch_size*block_length, tokens)
+            logits = out.view(batch_size*block_length, vocab_size)
             targets = y.view(batch_size*block_length)
             loss = F.cross_entropy(logits, targets)
             return out, loss
         else:
             return out
         
-    def generate(self, x):
-        x = x.view(1,1)
-        for _ in range(150):
+    def generate(self, x, length):
+        x = x.view(1,-1)
+        for _ in range(length):
             x = x[:, -block_length:]
             out = self(x)
             out = out[:, -1, :]

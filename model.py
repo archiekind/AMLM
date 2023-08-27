@@ -3,11 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 #hyperparameters
-layers = 1
+layers = 6
 heads = 8
-d_model = 128 #512
+d_model = 512
 batch_size = 32
-tokens = 150
+tokens = 2000
 block_length = 40
 device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 #model
@@ -88,7 +88,7 @@ class Model(nn.Module):
         
     def generate(self, x):
         x = x.view(1,1)
-        for _ in range(50):
+        for _ in range(150):
             x = x[:, -block_length:]
             out = self(x)
             out = out[:, -1, :]

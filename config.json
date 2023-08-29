@@ -1,11 +1,14 @@
 {
-    "layers": 6,
+    "layers": 8,
     "heads": 8,
     "d_model": 512,
     "vocab_size": 2000,
-    "block_length": 200,
-    "batch_size": 32,
-    "training_steps": 10000,
+    "block_length": 100,
+    "batch_size": 64,
+    "training_steps": 10001,
     "learning_rate": 3e-4,
-    "val_steps": 50
+    "val_steps": 200,
+    "activation": "SwiGLU",
+    "attention": "MHA",
+    "groups": 4
 }
